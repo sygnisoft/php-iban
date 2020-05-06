@@ -66,6 +66,32 @@ function iban_to_human_format($iban) {
  return wordwrap($iban,4,' ',true);
 }
 
+# Convert an IBAN to obfuscated presentation. To do this, we
+# replace the checksum and all subsequent characters with an
+# asterisk, except for the final four characters, and then
+# return in human format, ie.
+#  HU69107000246667654851100005 -> HU** **** **** **** **** **** 0005
+# 
+# We avoid the checksum as it may be used to infer the rest
+# of the IBAN in cases where the country has few valid banks
+# and branches, or other information about the account such
+# as bank, branch, or date issued is known (where a sequential
+# issuance scheme is in use).
+# 
+# Note that output of this function should be presented with 
+# other information to a user, such as the date last used or 
+# the date added to their account, in order to better facilitate
+# unambiguous relative identification.
+function iban_to_obfuscated_format($iban) {
+ $iban = iban_to_machine_format($iban);
+ $tr = substr($iban,0,2);
+ for($i=2;$i<strlen($iban)-4;$i++) {
+  $tr .= '*';
+ }
+ $tr .= substr($iban,strlen($iban)-4);
+ return iban_to_human_format($tr);
+}
+
 # Get the country part from an IBAN
 function iban_get_country_part($iban) {
  $iban = iban_to_machine_format($iban);
@@ -144,7 +170,7 @@ function iban_mod97_10_checksum($numeric_representation) {
  return $checksum;
 }
 
-# Perform MOD97-10 checksum calculation ('Germanic-level effiency' version - thanks Chris!)
+# Perform MOD97-10 checksum calculation ('Germanic-level efficiency' version - thanks Chris!)
 function iban_mod97_10($numeric_representation) {
  global $__disable_iiban_gmp_extension;
  # prefer php5 gmp extension if available
@@ -376,6 +402,7 @@ function iban_country_get_central_bank_name($iban_country) {
 
 # Get the list of all IBAN countries
 function iban_countries() {
+ _iban_load_registry();
  global $_iban_registry;
  return array_keys($_iban_registry);
 }
@@ -471,7 +498,6 @@ function iban_mistranscription_suggestions($incorrect_iban) {
 # Load the IBAN registry from disk.
 global $_iban_registry;
 $_iban_registry = array();
-_iban_load_registry();
 function _iban_load_registry() {
  global $_iban_registry;
  # if the registry is not yet loaded, or has been corrupted, reload
@@ -525,6 +551,7 @@ function _iban_get_info($iban,$code) {
 
 # Get information from the IBAN registry by country / code combination
 function _iban_country_get_info($country,$code) {
+ _iban_load_registry();
  global $_iban_registry;
  $country = strtoupper($country);
  $code = strtolower($code);
@@ -721,11 +748,11 @@ function _iban_nationalchecksum_implementation_fr_letters2numbers_helper($bban) 
                      "S" => 2, "T" => 3, "U" => 4, "V" => 5, "W" => 6, "X" => 7, "Y" => 8, "Z" => 9
                     );
  for ($i=0; $i < strlen($bban); $i++) {
-  if(is_numeric($bban{$i})) {
-   $allNumbers .= $bban{$i};
+  if(is_numeric($bban[$i])) {
+   $allNumbers .= $bban[$i];
   }
   else {
-   $letter = strtoupper($bban{$i});
+   $letter = strtoupper($bban[$i]);
    if(array_key_exists($letter, $conversion)) {
     $allNumbers .= $conversion[$letter];
    }
@@ -772,11 +799,6 @@ function _iban_nationalchecksum_implementation_cg($iban,$mode) {
 
 # Implement the national checksum for a Djibouti (DJ) IBAN
 function _iban_nationalchecksum_implementation_dj($iban,$mode) {
- return _iban_nationalchecksum_implementation_fr($iban,$mode);
-}
-
-# Implement the national checksum for an Egypt (EG) IBAN
-function _iban_nationalchecksum_implementation_eg($iban,$mode) {
  return _iban_nationalchecksum_implementation_fr($iban,$mode);
 }
 
@@ -1195,6 +1217,67 @@ function _damm($input) {
  }
  return $checksum;
 }
+
+# Implement the national checksum for an Italian (IT) IBAN
+function _iban_nationalchecksum_implementation_it($iban,$mode) {
+ if($mode != 'set' && $mode != 'find' && $mode != 'verify') { return ''; } # blank value on return to distinguish from correct execution
+ $nationalchecksum = iban_get_nationalchecksum_part($iban);
+ $bban = iban_get_bban_part($iban);
+ $bban_less_checksum = substr($bban,1);
+ $expected_nationalchecksum = _italian($bban_less_checksum);
+ if($mode=='find') {
+  return $expected_nationalchecksum;
+ }
+ elseif($mode=='set') {
+  return _iban_nationalchecksum_set($iban,$expected_nationalchecksum);
+ }
+ elseif($mode=='verify') {
+  return (iban_get_nationalchecksum_part($iban) == $expected_nationalchecksum);
+ }
+}
+
+# Implement the national checksum for a San Marino (SM) IBAN
+function _iban_nationalchecksum_implementation_sm($iban,$mode) {
+  // San Marino adheres to Italian rules.
+  return _iban_nationalchecksum_implementation_it($iban,$mode);
+}
+
+# Italian (and San Marino's) checksum
+# (Credit: Translated by Francesco Zanoni from http://community.visual-basic.it/lucianob/archive/2004/12/26/2464.aspx)
+# (Source: European Commettee of Banking Standards' Register of European Account Numbers (TR201 V3.23 — FEBRUARY 2007), 
+#          available at URL http://www.cnb.cz/cs/platebni_styk/iban/download/TR201.pdf)
+function _italian($input)
+{
+  $digits = str_split('0123456789');
+  $letters = str_split('ABCDEFGHIJKLMNOPQRSTUVWXYZ-. ');
+  $lengthOfBbanWithoutChecksum = 22;
+  $divisor = 26;
+  $evenList = array(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28);
+  $oddList = array(1, 0, 5, 7, 9, 13, 15, 17, 19, 21, 2, 4, 18, 20, 11, 3, 6, 8, 12, 14, 16, 10, 22, 25, 24, 23, 27, 28, 26);
+
+  // Character value computation
+  $sum = 0;
+
+  for ($k = 0; $k < $lengthOfBbanWithoutChecksum; $k++) {
+
+    $i = array_search($input[$k], $digits);
+    if ($i === false) {
+      $i = array_search($input[$k], $letters);
+    }
+
+    // In case of wrong characters,
+    // an unallowed checksum value is returned.
+    if ($i === false) {
+      return '';
+    }
+
+    $sum += (($k % 2) == 0 ? $oddList[$i] : $evenList[$i]);
+
+  }
+
+  return $letters[$sum % $divisor];
+}
+
 
 # Internal proxy function to access national checksum implementations
 #  $iban = IBAN to work with (length and country must be valid, IBAN checksum and national checksum may be incorrect)
